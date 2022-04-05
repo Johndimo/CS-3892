@@ -1,49 +1,15 @@
 function collision(m1::Movable, m2::Movable)
-    P = sparse([1. 0 -1. 0;
-                0 1. 0 -1.;
-                -1. 0 1. 0;
-                0. -1. 0 1.])
-    c1 = cos(heading(m1))
-    s1 = sin(heading(m1))
-    c2 = cos(heading(m2))
-    s2 = sin(heading(m2))
-    A = [c1 s1 0 0 ;
-         -s1 c1 0 0;
-         0 0 c2 s2;
-         0 0 -s2 c2]
-    b = A*[position(m1); position(m2)]
-    l = [rear(m1), right(m1), rear(m2), right(m2)] + b
-    u = [front(m1), left(m1), front(m2), left(m2)] + b
-
-    mod = OSQP.Model()
-    OSQP.setup!(mod; P=P, q=zeros(4), A=sparse(A), l=l, u=u, verbose=false, polish=true)
-    results = OSQP.solve!(mod)
-
-    results.info.obj_val < 1e-5
+    b1 = Box2(m1)
+    b2 = Box2(m2)
+    intersect(b1,b2).collision
 end
 
-function norm(x)
-    sqrt(x'*x)
-end
-
-function find_closest!(ids, movables, n)
-    dists = []
-    for (i, m) ∈ movables
-        push!(dists, (norm(position(movables[1])-position(movables[i])), i))
-    end
-
-    sort!(dists; alg=Base.Sort.PartialQuickSort(n), by=x->x[1])
-    for i ∈ 1:length(ids)
-        ids[i] = dists[i][2]
-    end
-end
-
-function collision(movables, closest_ids)
-    return false
-    for id ∈ closest_ids
-        if id != 1 
-            col = collision(movables[1], movables[id])
-            if col
+function collision(movables; max_dist=50.0)
+    pos1 = position(movables[1])
+    for (id, movable) ∈ movables
+        if id != 1
+            dist = norm(pos1 - position(movable))
+            if dist < max_dist && collision(movables[1], movable)
                 return true
             end
         end
@@ -51,93 +17,87 @@ function collision(movables, closest_ids)
     return false
 end
 
-function update_display!(viewables, movables, closest_ids)
-    for (i,id) ∈ enumerate(closest_ids)
-        pts = get_corners(movables[id])
-        viewables[i][1][] = pts
-        #for j ∈ 1:8
-            #viewables[i][1][j][] = pts[j]
-            #viewables[i][1][][j] = pts[j]
-        #end
-        viewables[i][2][] = movables[id].color
+function road_violation(m::Movable, road)
+    segment_id = road_segment(m, road)  
+    mbox = Box2(m)
+    seg = road.segments[segment_id]
+    if isa(seg, CurvedSegment)
+        if seg.θ₁ ≤ seg.θ₂
+            inner = Circle(seg.center..., seg.radius)
+            outer = Circle(seg.center..., seg.radius+road.lanes*road.lanewidth)
+        else
+            outer = Circle(seg.center..., seg.radius)
+            inner = Circle(seg.center..., seg.radius-road.lanes*road.lanewidth)
+        end
+        c1 = inside(mbox, outer)
+        c2 = !intersect(mbox, inner).collision
+        violation = !inside(mbox, outer) || intersect(mbox, inner).collision
+        return violation
+    else
+        rbox = Box2(seg)
+        return inside(mbox, rbox)
     end
 end
 
 struct Simulator
     movables::Dict{Int,Movable}
-    sensors::Dict{Int,Sensor}
-    viewables
-    camera
     road
 end
 
-function simulate(sim::Simulator, e;
+function simulate(sim::Simulator, emg, channel;
                   Δ=0.001,              
                   disp=false,
-                  K = 0.01,
-                  print_increment=0.01,
+                  check_collision=true,
+                  check_road_violation=[],
+                  print_increment=0.1,
                   )
 
     t0 = time_ns()
     simulated_time = 0.0
     display_time = 0.0
-    num_viewed = length(sim.viewables)
-    closest_ids = zeros(Int, num_viewed)
-    if length(sim.movables) > 1
-        CMD_FLEET = sim.movables[2].channel
-    end
+    println("Simulating on thread ", Threads.threadid())
+    iters = 0
     #try
         while true
-            sleep(0.001)
+            sleep(0)
+            @return_if_told(emg)
             simulated_time += Δ
             display_time += Δ
+            iters += 1
 
-            if length(CMD_FLEET.data) > 0
-                fleet_control = take!(CMD_FLEET)
-                for (id, cmd) ∈ fleet_control
-                    sim.movables[id].control .= cmd
-                end
-            end  
             for (id, movable) ∈ sim.movables
-                if id == 1
-                    update_command!(movable)
-                end
-
+                update_command!(movable)
                 update_state!(movable, Δ)
             end
+           
+            @replace(channel, (simulated_time, sim.movables))
 
-            for (id, sensor) ∈ sim.sensors
-                update_sensor(sensor, simulated_time, sim.movables,sim.road)
-            end
-
-            find_closest!(closest_ids, sim.movables, num_viewed) 
-
-            if collision(sim.movables, closest_ids)
+            if check_collision && collision(sim.movables)
                 println()
                 println("Collision!")
-                put!(e, 1)
+                @replace(emg, 1)
                 return
             end
 
-            update_display!(sim.viewables, sim.movables, closest_ids)
-            if !isnothing(sim.camera)
-                sim.camera.x[] = sim.movables[1].state[1]
-                sim.camera.y[] = sim.movables[1].state[2]
-                sim.camera.θ[] = sim.movables[1].state[4]
+            if length(check_road_violation) > 0
+                for id ∈ check_road_violation
+                    if road_violation(sim.movables[id], sim.road)
+                        println()
+                        println("Road boundary violation!")
+                        @replace(emg, 1)
+                        return
+                    end
+                end
             end
+
 
             if display_time > print_increment
                 if disp
                     print("\e[2K")
                     print("\e[1G")
-                    @printf("Loop time: %f.", Δ)
+                    @printf("Loop time: %f.", simulated_time / iters)
                 end
                 display_time -= print_increment
-            end
-            if length(e.data) > 0
-                println()
-                println("Interrupt!")
-                return
             end
             err = (time_ns()-t0)/1e9 - simulated_time
             Δ = max(0.0, min(5e-1, err))

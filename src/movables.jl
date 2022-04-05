@@ -1,8 +1,9 @@
 abstract type Movable end
+abstract type Immovable end
 
 VehicleControl = SVector{2, Float64}
 
-Base.@kwdef mutable struct Unicycle <: Movable
+Base.@kwdef struct Unicycle <: Movable
     state::MVector{4, Float64} = MVector{4, Float64}(0,0,0,0)
     control::MVector{2, Float64} = MVector{2, Float64}(0,0)
     length::Float64 = 3.0
@@ -11,11 +12,10 @@ Base.@kwdef mutable struct Unicycle <: Movable
     color = parse(RGB, "rgb"*string((0,0,255)))
     target_vel::Float64 = 0
     target_lane::Int = 0
-    channel = Channel(0)
+    channel::ChannelLock{VehicleControl} = ChannelLock{VehicleControl}(0)
 end
 
-#todo not mutable structs
-Base.@kwdef mutable struct Bicycle <: Movable
+Base.@kwdef struct Bicycle <: Movable
     state::MVector{4, Float64} = MVector{4, Float64}(0,0,0,0)
     control::MVector{2, Float64} = MVector{2, Float64}(0,0)
     lf::Float64 = 1.5
@@ -25,7 +25,66 @@ Base.@kwdef mutable struct Bicycle <: Movable
     color = parse(RGB, "rgb"*string((0,0,255)))
     target_vel::Float64 = 0
     target_lane::Int = 0
-    channel = Channel(0)
+    channel::ChannelLock{VehicleControl} = ChannelLock{VehicleControl}(0)
+end
+
+Base.@kwdef struct Building <: Movable
+    position::SVector{2, Float64} = [0,0]
+    heading::Float64 = 0.0
+    width::Float64 = 10.0
+    length::Float64 = 10.0
+    height::Float64 = 20.0
+    color = parse(RGB, "rgb"*string((0,0,0)))
+    channel::ChannelLock{Int} = ChannelLock{Int}(0)
+end
+
+Base.copy(x::T) where T<:Movable = T([deepcopy(getfield(x, k)) for k ∈ fieldnames(T)]...)
+
+function position(m::Building)
+    m.position
+end
+function heading(m::Building)
+    m.heading
+end
+function speed(m::Building)
+    0.0
+end
+
+function update_state!(m::Building, Δ)
+    return
+end
+
+function insert_random_building!(buildings, x_range, y_range)
+    existing = [Box2(building) for building ∈ buildings]
+    block = Box2(x_range, y_range)
+    tries = 0
+    while true
+        x = x_range[1] + rand()*(x_range[2]-x_range[1])
+        y = y_range[1] + rand()*(y_range[2]-y_range[1])
+        position=[x,y]
+        #heading = rand()*2*pi-pi
+        heading = 0.0
+        width = 5.0 + rand()*10.0
+        length = 5.0 + rand()*10.0
+        height = 10.0 + rand()*20.0
+        color = parse(RGB, "rgb"*string(Tuple(rand(0:255,3))))
+        building = Building(position=position, 
+                            heading=heading, 
+                            width=width, 
+                            length=length, 
+                            height=height, 
+                            color=color)
+        box = Box2(building)
+        if inside(box, block) && !any(intersect(box, other).collision for other ∈ existing)
+            push!(buildings, building)
+            break
+        else
+            tries += 1
+        end
+        if tries > 50
+            error("Can't make a random building, try different sizes")
+        end
+    end
 end
 
 function state(m)
@@ -38,9 +97,9 @@ end
 
 function get_corners(m)
     pts = Vector{Vector{Float64}}()
-    x = m.state[1]
-    y = m.state[2]
-    θ = m.state[4]
+    x = position(m)[1]
+    y = position(m)[2]
+    θ = heading(m)
     for i ∈ [rear(m), front(m)] 
         for j ∈ [right(m), left(m)]
             for k ∈ [bottom(m), top(m)]
@@ -52,9 +111,10 @@ function get_corners(m)
 end
 
 function update_command!(m)
-    if length(m.channel.data) > 0
-        m.control .= take!(m.channel)
-    end  
+    m.control .= @fetch_or_return(m.channel)
+end
+function update_command!(m::Building)
+    return
 end
 
 function update_state!(m::Unicycle, Δ)
@@ -121,4 +181,12 @@ function rear(m::Bicycle)
 end
 function front(m::Bicycle)
     m.lf
+end
+
+function rear(b::Building)
+    -0.5*b.length
+end
+
+function front(b::Building)
+    0.5*b.length
 end

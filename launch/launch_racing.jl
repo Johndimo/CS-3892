@@ -3,13 +3,17 @@ using GLMakie
 using Colors
 using StaticArrays
 using Polyhedra
+using .Threads
 
 function launch_racing(; num_agents=50, num_viewable=10, loop=true, loop_radius=100.0, lanes=3, lanewidth=5.0)
- 
-    CMD_EGO = Channel{VehicleControl}(1)
-    CMD_FLEET = Channel{Dict{Int, VehicleControl}}(1)
-    EMG = Channel(1)
-    KEY = Channel(1)
+
+    CMD_EGO = ChannelLock{VehicleControl}(1)
+    CMD_FLEET = Dict{Int, ChannelLock{VehicleControl}}()
+    EMG = ChannelLock{Int}(1)
+    KEY = ChannelLock{Char}(1)
+    SIM_ALL = ChannelLock{Tuple{Float64,Dict{Int, Movable}}}(1)
+    SENSE_EGO = ChannelLock{OracleMeas}(1)
+    SENSE_FLEET = ChannelLock{Dict{Int,OracleMeas}}(1)
 
     if loop
         road = simple_loop(radius=loop_radius, lanes=lanes, lanewidth=lanewidth)
@@ -19,11 +23,10 @@ function launch_racing(; num_agents=50, num_viewable=10, loop=true, loop_radius=
    
     num_viewable = min(num_viewable, num_agents)
 
-    m1 = Bicycle(state=MVector{4,Float64}(0,-(lanes-1 + 0.5)*lanewidth,20,0), channel=CMD_EGO)
+    m1 = Bicycle(state=MVector{4,Float64}(0,-(lanes-2 + 0.5)*lanewidth,20,0), channel=CMD_EGO)
     movables = Dict(1=>m1)
     
     for i ∈ 2:num_agents
-        θ = 0.0
         extra_size = rand()
         width = 1.5 + 2.0 * extra_size
         length = 3.0 + 6.0 * extra_size
@@ -31,8 +34,12 @@ function launch_racing(; num_agents=50, num_viewable=10, loop=true, loop_radius=
         speed = 10.0 + rand()*20.0
         lane = rand(1:lanes)
         color = parse(RGB, "rgb"*string(Tuple(rand(0:255,3))))
+        channel = ChannelLock{VehicleControl}(1)
         if loop
-            θ = rand() * 2.0 * pi - pi
+            θ = -π/2.0
+            while -π/2.0-π/6.0 ≤ θ ≤ -π/2.0+π/6.0
+                θ = rand() * 2.0 * pi - pi
+            end
             rad = loop_radius + lanewidth / 2.0 + lanewidth * (lane-1)
             x = 0.0+cos(θ)*rad
             y = loop_radius+sin(θ)*rad
@@ -53,31 +60,27 @@ function launch_racing(; num_agents=50, num_viewable=10, loop=true, loop_radius=
                                color=color,
                                target_vel=speed,
                                target_lane=lane,
-                               channel=CMD_FLEET)
+                               channel=channel)
+        CMD_FLEET[i] = channel
     end
     
-    SENSE_EGO = Channel{OracleMeas}(1)
-    SENSE_FLEET = Channel{Dict{Int,OracleMeas}}(1)
-    s1 = Oracle(1, SENSE_EGO) 
+    s1 = Oracle(1, false, SENSE_EGO) 
     s2 = FleetOracle(Set(2:num_agents), SENSE_FLEET)
     sensors = Dict(1=>s1, 2=>s2)
     
     scene = Scene(resolution = (1200, 1200), show_axis=false)
-    cam = cam3d!(scene, near=0.001, far=100.0, update_rate=0.01)
+    cam = cam3d!(scene, near=0.001, far=1000.0)
     visualize_road(scene, road)
    
-
     #TODO pull view_obj stuff into function 
     view_objs = []
     
     for i ∈ 1:num_viewable
         color = Observable(movables[i].color)
         corners = Observable{SVector{8, SVector{3, Float64}}}(get_corners(movables[i]))
-        #corners = SVector{8, Observable{SVector{3, Float64}}}(get_corners(movables[i]))
         push!(view_objs, (corners, color)) 
 
         hull = @lift convexhull($corners...)
-        #hull = @lift convexhull($(corners[1]), $(corners[2]), $(corners[3]), $(corners[4]), $(corners[5]), $(corners[6]), $(corners[7]), $(corners[8]))
         poly = @lift polyhedron($hull)
         mesh = @lift Polyhedra.Mesh($poly)  
         GLMakie.mesh!(scene, mesh, color=color)
@@ -89,16 +92,17 @@ function launch_racing(; num_agents=50, num_viewable=10, loop=true, loop_radius=
     lookat = @lift Vec3{Float32}($(cam.x), $(cam.y), 0)
     @lift update_cam!(scene, $camera_pos, $lookat)
 
-    sim = Simulator(movables, sensors, view_objs, cam, road)
+    sim = Simulator(movables, road)
 
     display(scene)
-    
     @sync begin
-        @async controller(KEY, CMD_EGO, SENSE_EGO, EMG; disp=false, V=speed(m1), θ=heading(m1))
-        @async fleet_controller(CMD_FLEET, SENSE_FLEET, EMG, road)
-        @async simulate(sim, EMG; disp=false)
-        @async keyboard_broadcaster(KEY, EMG)
+        @async visualize(SIM_ALL, EMG, view_objs, cam)
+        @spawn simulate(sim, EMG, SIM_ALL; disp=false, check_collision=true,check_road_violation=[1,])
+        @spawn keyboard_controller(KEY, CMD_EGO, SENSE_EGO, EMG, V=speed(m1), θ=heading(m1), θ_step=0.25)
+        #@spawn controller(CMD_EGO, SENSE_EGO, SENSE_FLEET, EMG, road)  (YOUR SOLUTION)
+        @spawn fleet_controller(CMD_FLEET, SENSE_FLEET, EMG, road)
+        @spawn sense(SIM_ALL, EMG, sensors, road)
+        @spawn keyboard_broadcaster(KEY, EMG) 
     end
-    #GLMakie.destroy!(GLMakie.global_gl_screen())
     nothing
 end
