@@ -59,18 +59,39 @@ function controller(CMD::ChannelLock,
                     SENSE::ChannelLock, 
                     SENSE_FLEET::ChannelLock, 
                     EMG::ChannelLock,
-                    road)
+                    road,
+                    m::Movable)
     local ego_meas
     local fleet_meas
 
+    v = 10.0
+    θ = 0
+    p = 0
     while true
         sleep(0)
         @return_if_told(EMG)
+        meas = @fetch_or_continue(SENSE)
+        speed = meas.speed
+        heading = meas.heading
+        segment = road.segments[road_segment(m,road)]
         
-        @try_update(SENSE, ego_meas)
-        @try_update(SENSE_FLEET, fleet_meas)
 
-        cmd = [0, 0] # change to your solution!
+        if p < 4000
+        cte, ctv = get_crosstrack_error(meas.position, meas.heading, meas.speed, 3, segment, road.lanes, road.lanewidth)
+        p = p + 0.5
+        else
+            cte, ctv = get_crosstrack_error(meas.position, meas.heading, meas.speed, 1, segment, road.lanes, road.lanewidth)
+        end
+        K₁ = 0.5
+        K₂ = 0.5
+        δ = -K₁*cte-K₂*ctv
+
+        
+       # @try_update(SENSE, ego_meas)
+       # @try_update(SENSE_FLEET, fleet_meas)
+        err_1 = v-speed
+        err_2 = clip(θ-heading, π/2)
+        cmd = [0.0 max(min(δ, π/4.0), -π/4.0)]
         @replace(CMD, cmd)
     end
 end
