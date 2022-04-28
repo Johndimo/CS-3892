@@ -85,11 +85,12 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
     end
 
     Δ=0.125
-    K₁ = 0.5
-    K₂ = 0.5
+    K₁ = 0.05
+    K₂ = 0.05
     simIterations = 8
-    max_dist = 12.5
+    max_dist = 7.5
     dists = [0 0 0]
+    seg = road.segments[1]
 
 
     movablesCopyLane1 = deepcopy(currMovables)
@@ -107,7 +108,6 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
                     end
                 end
 
-                seg = road.segments[road_segment(mov,road)]
                 if id == 1
                     cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), 1, seg, road.lanes, road.lanewidth)
                 else
@@ -148,7 +148,6 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
                     end
                 end
 
-                seg = road.segments[road_segment(mov,road)]
                 if id == 1
                     cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), 1, seg, road.lanes, road.lanewidth)
                 else
@@ -186,7 +185,6 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
                     end
                 end
 
-                seg = road.segments[road_segment(mov,road)]
                 if id == 1
                     cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), 3, seg, road.lanes, road.lanewidth)
                 else
@@ -209,10 +207,8 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
             dists[3] += 1;
         end
 
-
-
         canGo = [lane1 lane2 lane3]
-        if dists[currLane] > 3
+        if dists[currLane] > 1
             canGo[currLane] = true
         end
 
@@ -238,12 +234,13 @@ function controller(CMD::ChannelLock,
     canGo = [0 0 0]
     dists = [0 0 0]
     maxLane = 0
+    segment = road.segments[road_segment(m,road)]
+    laneImp = 1
     while true
         sleep(0)
         @return_if_told(EMG)
 
         meas = @fetch_or_continue(SENSE)
-        segment = road.segments[road_segment(m,road)]
         targetSpeed = meas.speed
         fleet_meas = @fetch_or_continue(SENSE_FLEET)
 
@@ -267,6 +264,17 @@ function controller(CMD::ChannelLock,
             end
         end
 
+        if norm(meas.position - segment.center) < 105
+            laneImp = 1
+        elseif norm(meas.position - segment.center) < 110
+            laneImp = 2
+        else
+            laneImp = 3
+        end
+
+        while dists[laneImp] < 2 && targetSpeed > 15
+            targetSpeed -= speedChange
+        end
         
         targetLane = 0
 
@@ -276,30 +284,27 @@ function controller(CMD::ChannelLock,
         if prevLane == 2
             targetLane = maxLane
         elseif prevLane == 1
-            if dists[1] > dists[2]
+            if dists[1] >= dists[2]
                 targetLane = 1
             else
                 targetLane = 2
             end
         else
-            if dists[3] > dists[2]
+            if dists[3] >= dists[2]
                 targetLane = 3
             else
                 targetLane = 2
             end
         end
 
-        if dists[targetLane] < 3
+        if dists[targetLane] < 1
             targetLane = prevLane
             targetSpeed = 10
         end
 
-        if dists[targetLane] > 1
-            targetSpeed += speedChange/1.2
+        if dists[targetLane] > 1 && dists[prevLane] > 1 && prevLane == targetLane
+            targetSpeed += speedChange/2    
         end
-
-
-
 
         targetSpeed = min(targetSpeed, 35.0)
 
