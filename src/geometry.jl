@@ -23,23 +23,25 @@ function Box2(x_range, y_range)
     Box2(x, y, 0, lr, lf, w)
 end
 
-function Box2(road::Road, segment_id)
+function Box2(road::Road, segment_id; buf=10.0)
     segment = road.segments[segment_id]
-    if isa(CurvedSegment, segment)
+    if isa(segment, CurvedSegment)
         error("Can't make a curved road segment into a box!")
     end
     start = segment.start
     finish = segment.finish
-    vec = finish-segment
+    vec = finish-start
     len = norm(vec)
     vec /= len
+    start = start - buf*vec
+    finish = finish + buf*vec
     perp = [vec[2], -vec[1]]
     w = road.lanes*road.lanewidth
     start_r = start + perp*w
     finish_r = finish + perp*w
     avg = 0.25 * (start+start_r+finish+finish_r)
     θ = atan(vec[2], vec[1])
-    lr = lf = 0.5*len
+    lr = lf = 0.5*(len+2*buf)
     Box2(avg..., θ, lr, lf, w)
 end
 
@@ -131,6 +133,17 @@ function intersect(box::Box3, ray::Ray3; max_dist = 100.0)
     α = results.x[7]
     
     (; collision, dist, p, α)
+end
+
+function intersection_over_union(m1, m2)
+    c1 = get_corners(m1)
+    h1 = convexhull(c1...)
+    p1 = polyhedron(h1)
+
+    c2 = get_corners(m2)
+    h2 = convexhull(c2...)
+    p2 = polyhedron(h2)
+    Polyhedra.volume(Polyhedra.intersect(p1,p2)) / (Polyhedra.volume(p1) + Polyhedra.volume(p2))
 end
 
 function intersect(b1::Box2, b2::Box2)

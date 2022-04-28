@@ -6,10 +6,10 @@ function clip(x, l)
     max(-l, min(l, x))
 end
 
-function keyboard_controller(KEY::ChannelLock, 
-                             CMD::ChannelLock, 
-                             SENSE::ChannelLock, 
-                             EMG::ChannelLock;
+function keyboard_controller(KEY::Channel, 
+                             CMD::Channel, 
+                             SENSE::Channel, 
+                             EMG::Channel;
                              K1=5, 
                              K2=.5, 
                              disp=false, 
@@ -58,8 +58,8 @@ end
 
 function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int64, OracleMeas}, road, currLane)
 
-    CMD_FLEET_SIM = Dict{Int, ChannelLock{VehicleControl}}()
-    CMD_EGO_SIM = ChannelLock{VehicleControl}(1)
+    CMD_FLEET_SIM = Dict{Int, Channel{VehicleControl}}()
+    CMD_EGO_SIM = Channel{VehicleControl}(1)
     
     mSim = Bicycle(state=[meas.position[1] meas.position[2] target_speed meas.heading], channel=CMD_EGO_SIM)
     currMovables = Dict(1=>mSim)
@@ -70,7 +70,7 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
         length = 3.0 + 6.0 - 0.2
         height = 2.0 + 1.0 - 0.2
         color = parse(RGB, "rgb"*string(Tuple(rand(0:255,3))))
-        channel = ChannelLock{VehicleControl}(1)
+        channel = Channel{VehicleControl}(1)
         currMovables[id] = Bicycle(state=state,
                             control=control,
                             width=width,
@@ -215,10 +215,10 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
         lanes = hcat(canGo, dists)
 end
 
-function controller(CMD::ChannelLock, 
-                    SENSE::ChannelLock, 
-                    SENSE_FLEET::ChannelLock, 
-                    EMG::ChannelLock,
+function controller(CMD::Channel, 
+                    SENSE::Channel, 
+                    SENSE_FLEET::Channel, 
+                    EMG::Channel,
                     road,
                     m::Movable)
     local ego_meas
@@ -256,7 +256,7 @@ function controller(CMD::ChannelLock,
             if sum(canGo) > 0
                 foundALane = true
             else
-                if targetSpeed < 15
+                if targetSpeed < 10
                     foundALane = true
                 else
                     targetSpeed -= speedChange
@@ -272,7 +272,7 @@ function controller(CMD::ChannelLock,
             laneImp = 3
         end
 
-        while dists[laneImp] < 2 && targetSpeed > 15
+        while dists[laneImp] < 2 && targetSpeed > 10
             targetSpeed -= speedChange
         end
         
@@ -281,7 +281,7 @@ function controller(CMD::ChannelLock,
         
         
         
-        if prevLane == 2
+        if laneImp == 2
             targetLane = maxLane
         elseif prevLane == 1
             if dists[1] >= dists[2]
@@ -297,12 +297,12 @@ function controller(CMD::ChannelLock,
             end
         end
 
-        if dists[targetLane] < 1
+        if dists[targetLane] < 2 
             targetLane = prevLane
             targetSpeed = 10
         end
 
-        if dists[targetLane] > 1 && dists[prevLane] > 1 && prevLane == targetLane
+        if dists[laneImp] > 1#dists[targetLane] > 1 && dists[prevLane] > 1 && prevLane == targetLane
             targetSpeed += speedChange/2    
         end
 

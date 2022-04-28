@@ -19,8 +19,8 @@ function find_closest!(ids, movables, n)
     end
 end
 
-function visualize(MEAS::ChannelLock{PointCloud},
-                   EMG::ChannelLock,
+function visualize(MEAS::Channel{PointCloud},
+                   EMG::Channel,
                    lidar::Lidar,
                    scene::Scene)
     lines = []
@@ -41,8 +41,8 @@ function visualize(MEAS::ChannelLock{PointCloud},
     end
 end
 
-function visualize(MEAS::ChannelLock{Dict{Int, Vector{BBoxMeas}}},
-                   EMG::ChannelLock,
+function visualize(MEAS::Channel{Dict{Int, Vector{BBoxMeas}}},
+                   EMG::Channel,
                    camera_array::Dict{Int, PinholeCamera},
                    scene::Scene)
     lines = []
@@ -66,8 +66,8 @@ function visualize(MEAS::ChannelLock{Dict{Int, Vector{BBoxMeas}}},
 end
 
 
-function visualize(SIM::ChannelLock, 
-                   EMG::ChannelLock,
+function visualize(SIM::Channel, 
+                   EMG::Channel,
                    viewables, 
                    follow_cam)
     num_viewed = length(viewables)
@@ -90,4 +90,27 @@ function visualize(SIM::ChannelLock,
     end
 end
 
+function visualize(TRACKS::Channel{TracksMessage}, 
+                   EMG::Channel,
+                   viewables, 
+                   dummy_pts)
 
+    num_viewed = length(viewables)
+    closest_ids = zeros(Int, num_viewed)
+    println("Visualizing on thread ", Threads.threadid())
+    while true
+        sleep(0)
+        @return_if_told(EMG) 
+        tracks_msg = @fetch_or_continue(TRACKS)
+        id = 1
+        for (tid, track) ∈ tracks_msg.tracks
+            pts = get_corners(track)
+            viewables[id][1][] = pts
+            id += 1
+        end
+        while id < num_viewed
+            viewables[id][1][] = dummy_pts
+            id += 1
+        end
+    end
+end
