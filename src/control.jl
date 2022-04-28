@@ -66,9 +66,9 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
     for (id, mov) ∈ fleet_meas
         state = MVector{4, Float64}(mov.position[1], mov.position[2], mov.speed, 0.0)
         control = [0.0 mov.heading]
-        width = 1.5 + 2.0 - 0.2
-        length = 3.0 + 6.0 - 0.2
-        height = 2.0 + 1.0 - 0.2
+        width = 1.5 + 2.0 - 0.05
+        length = 3.0 + 6.0 - 0.05
+        height = 2.0 + 1.0 - 0.05
         color = parse(RGB, "rgb"*string(Tuple(rand(0:255,3))))
         channel = Channel{VehicleControl}(1)
         currMovables[id] = Bicycle(state=state,
@@ -87,9 +87,10 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
     Δ=0.125
     K₁ = 0.05
     K₂ = 0.05
-    simIterations = 8
+    simIterations = 5
     max_dist = 7.5
-    dists = [0 0 0]
+    dists = [0.0 0.0 0.0]
+    vels = [0.0 0.0 0.0]
     seg = road.segments[1]
 
 
@@ -103,6 +104,7 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
                         dist = norm(pos1 - position(mov))
                         if dist < max_dist || collision(movablesCopyLane1[1], mov)
                             lane1 =  false
+                            vels[1] = speed(mov)
                             break;
                         end
                     end
@@ -142,6 +144,7 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
                     if mov.target_lane == 2
                         dist = norm(pos1 - position(mov))
                         if dist < max_dist || collision(movablesCopyLane2[1], mov)
+                            vels[2] = speed(mov)
                             lane2 =  false
                             break;
                         end
@@ -179,6 +182,7 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
                     if mov.target_lane == 3
                         dist = norm(pos1 - position(mov))
                         if dist < max_dist || collision(movablesCopyLane3[1], mov)
+                            vels[3] = speed(mov)
                             lane3 =  false
                             break;
                         end
@@ -212,7 +216,13 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
             canGo[currLane] = true
         end
 
-        lanes = hcat(canGo, dists)
+        if currLane == 1 && dists[2] < 2
+            dists[3] = 0
+        elseif currLane == 3 && dists[2] < 2
+            dists[1] = 0
+        end
+        temp = hcat(dists, vels)
+        lanes = hcat(canGo, temp)
 end
 
 function controller(CMD::Channel, 
@@ -233,9 +243,11 @@ function controller(CMD::Channel,
     lanes = [0 0 0 0 0 0]
     canGo = [0 0 0]
     dists = [0 0 0]
+    vels = [0.0 0.0 0.0]
     maxLane = 0
     segment = road.segments[road_segment(m,road)]
     laneImp = 1
+    speedChange = 6
     while true
         sleep(0)
         @return_if_told(EMG)
@@ -246,11 +258,24 @@ function controller(CMD::Channel,
 
         
         foundALane = false
-        speedChange = 5
+
+        if norm(meas.position - segment.center) < 104.5
+            laneImp = 1
+        elseif norm(meas.position - segment.center) < 109
+            laneImp = 2
+        else
+            laneImp = 3
+        end
+
+        if dists[laneImp] < 2
+            targetSpeed = vels[laneImp]
+        end
+
         while !foundALane
             lanes = findLane(targetSpeed, meas, fleet_meas, road, prevLane)
-            canGo = lanes[1:3]
-            dists = lanes[4:6]
+            canGo = round.(Int64, lanes[1:3])
+            dists = round.(Int64, lanes[4:6])
+            vels = lanes[7:9]
             maxLane = findmax(dists)[2]
             
             if sum(canGo) > 0
@@ -264,62 +289,38 @@ function controller(CMD::Channel,
             end
         end
 
-        if norm(meas.position - segment.center) < 105
-            laneImp = 1
-        elseif norm(meas.position - segment.center) < 110
-            laneImp = 2
-        else
-            laneImp = 3
-        end
-
-        while dists[laneImp] < 2 && targetSpeed > 10
-            targetSpeed -= speedChange
-        end
         
         targetLane = 0
 
         
-        
-        
-        if laneImp == 2
+    
+        if laneImp == 2 || laneImp == maxLane
             targetLane = maxLane
-        elseif prevLane == 1
-            if dists[1] >= dists[2]
+        elseif laneImp == 1
+            if dists[1] > dists[2]
                 targetLane = 1
             else
                 targetLane = 2
             end
         else
-            if dists[3] >= dists[2]
+            if dists[3] > dists[2]
                 targetLane = 3
             else
                 targetLane = 2
             end
         end
 
-        if dists[targetLane] < 2 
-            targetLane = prevLane
-            targetSpeed = 10
-        end
-
-        if dists[laneImp] > 1#dists[targetLane] > 1 && dists[prevLane] > 1 && prevLane == targetLane
-            targetSpeed += speedChange/2    
-        end
-
-        targetSpeed = min(targetSpeed, 35.0)
-
         cte, ctv = get_crosstrack_error(meas.position, meas.heading, targetSpeed, targetLane, segment, road.lanes, road.lanewidth)
-        prevLane = targetLane
+        prevLane = laneImp  
 
         K₁ = 0.05
         K₂ = 0.05
         δ = -K₁*cte-K₂*ctv
+        if dists[laneImp] > 1#dists[targetLane] > 1 && dists[prevLane] > 1 && prevLane == targetLane
+            targetSpeed += speedChange/2
+        end
 
-    # @try_update(SENSE, ego_meas)
-    # @try_update(SENSE_FLEET, fleet_meas)
-        err_1 = v-meas.speed
-        err_2 = clip(θ-meas.heading, π/2)
-        accel = 50*err_1
+        targetSpeed = min(targetSpeed, 40.0)
         m.state[3] = targetSpeed
         cmd = [0 max(min(δ, π/4.0), -π/4.0)]
 
