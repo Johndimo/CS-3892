@@ -84,145 +84,28 @@ function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int6
         CMD_FLEET_SIM[id] = channel
     end
 
-    Δ=0.125
-    K₁ = 0.05
-    K₂ = 0.05
-    simIterations = 5
-    max_dist = 7.5
+    simIterations = 4
+    Δ = 0.125
     dists = [0.0 0.0 0.0]
     vels = [0.0 0.0 0.0]
-    seg = road.segments[1]
 
+    lane1 = run_simulation_iteration(simIterations, Δ, currMovables, vels, 1, dists, road)
+    lane2 = run_simulation_iteration(simIterations, Δ, currMovables, vels, 2, dists, road)
+    lane3 = run_simulation_iteration(simIterations, Δ, currMovables, vels, 3, dists, road)
 
-    movablesCopyLane1 = deepcopy(currMovables)
-        lane1 = true
-        for i in 1:simIterations
-            for (id, mov) ∈ movablesCopyLane1
-                pos1 = position(movablesCopyLane1[1])
-                if id != 1
-                    if mov.target_lane == 1
-                        dist = norm(pos1 - position(mov))
-                        if dist < max_dist || collision(movablesCopyLane1[1], mov)
-                            lane1 =  false
-                            vels[1] = speed(mov)
-                            break;
-                        end
-                    end
-                end
+    canGo = [lane1 lane2 lane3]
+    if dists[currLane] > 1
+        canGo[currLane] = true
+    end
 
-                if id == 1
-                    cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), 1, seg, road.lanes, road.lanewidth)
-                else
-                    cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), mov.target_lane, seg, road.lanes, road.lanewidth)
-                end
-                δ = -K₁*cteS-K₂*ctvS
-                command = [0.0 max(min(δ, π/4.0), -π/4.0)]
-                θ = mov.state[4]
-                v = mov.state[3]
-                a = command[1]
-                ω = command[2]
-                mov.state[1] += Δ * cos(θ) * v
-                mov.state[2] += Δ * sin(θ) * v
-                mov.state[3] += Δ * a
-                mov.state[4] += Δ * ω
-            end
-            if !lane1
-                break;
-            end
-            dists[1] += 1;
-        end
-
-
-
-
-        movablesCopyLane2 = deepcopy(currMovables)
-        lane2 = true
-        for i in 1:simIterations
-            for (id, mov) ∈ movablesCopyLane2
-                pos1 = position(movablesCopyLane2[1])
-                if id != 1
-                    if mov.target_lane == 2
-                        dist = norm(pos1 - position(mov))
-                        if dist < max_dist || collision(movablesCopyLane2[1], mov)
-                            vels[2] = speed(mov)
-                            lane2 =  false
-                            break;
-                        end
-                    end
-                end
-
-                if id == 1
-                    cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), 1, seg, road.lanes, road.lanewidth)
-                else
-                    cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), mov.target_lane, seg, road.lanes, road.lanewidth)
-                end
-                δ = -K₁*cteS-K₂*ctvS
-                command = [0.0 max(min(δ, π/4.0), -π/4.0)]
-                θ = mov.state[4]
-                v = mov.state[3]
-                a = command[1]
-                ω = command[2]
-                mov.state[1] += Δ * cos(θ) * v
-                mov.state[2] += Δ * sin(θ) * v
-                mov.state[3] += Δ * a
-                mov.state[4] += Δ * ω
-            end
-            if !lane2
-                break;
-            end
-            dists[2] += 1;
-        end
-
-        movablesCopyLane3 = deepcopy(currMovables)
-        lane3 = true
-        for i in 1:simIterations
-            for (id, mov) ∈ movablesCopyLane3
-                pos1 = position(movablesCopyLane3[1])
-                if id != 1
-                    if mov.target_lane == 3
-                        dist = norm(pos1 - position(mov))
-                        if dist < max_dist || collision(movablesCopyLane3[1], mov)
-                            vels[3] = speed(mov)
-                            lane3 =  false
-                            break;
-                        end
-                    end
-                end
-
-                if id == 1
-                    cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), 3, seg, road.lanes, road.lanewidth)
-                else
-                    cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), mov.target_lane, seg, road.lanes, road.lanewidth)
-                end
-                δ = -K₁*cteS-K₂*ctvS
-                command = [0.0 max(min(δ, π/4.0), -π/4.0)]
-                θ = mov.state[4]
-                v = mov.state[3]
-                a = command[1]
-                ω = command[2]
-                mov.state[1] += Δ * cos(θ) * v
-                mov.state[2] += Δ * sin(θ) * v
-                mov.state[3] += Δ * a
-                mov.state[4] += Δ * ω
-            end
-            if !lane3
-                break;
-            end
-            dists[3] += 1;
-        end
-
-        canGo = [lane1 lane2 lane3]
-        if dists[currLane] > 1
-            canGo[currLane] = true
-        end
-
-        if currLane == 1 && dists[2] < 2
-            dists[3] = 0
-        elseif currLane == 3 && dists[2] < 2
-            dists[1] = 0
-        end
-        temp = hcat(dists, vels)
-        lanes = hcat(canGo, temp)
+    if currLane == 1 && dists[2] < 2
+        dists[3] = 0
+    elseif currLane == 3 && dists[2] < 2
+        dists[1] = 0
+    end
+    
+    temp = hcat(dists, vels)
+    lanes = hcat(canGo, temp)
 end
 
 function controller(CMD::Channel, 
@@ -255,8 +138,6 @@ function controller(CMD::Channel,
         meas = @fetch_or_continue(SENSE)
         targetSpeed = meas.speed
         fleet_meas = @fetch_or_continue(SENSE_FLEET)
-
-        
         foundALane = false
 
         if norm(meas.position - segment.center) < 104.5
@@ -291,7 +172,6 @@ function controller(CMD::Channel,
 
         
         targetLane = 0
-
         
     
         if laneImp == 2 || laneImp == maxLane
@@ -313,17 +193,65 @@ function controller(CMD::Channel,
         cte, ctv = get_crosstrack_error(meas.position, meas.heading, targetSpeed, targetLane, segment, road.lanes, road.lanewidth)
         prevLane = laneImp  
 
-        K₁ = 0.05
-        K₂ = 0.05
+        K₁ = 0.04
+        K₂ = 0.04
         δ = -K₁*cte-K₂*ctv
-        if dists[laneImp] > 1#dists[targetLane] > 1 && dists[prevLane] > 1 && prevLane == targetLane
+
+        if dists[laneImp] > 1
             targetSpeed += speedChange/2
         end
 
-        targetSpeed = min(targetSpeed, 40.0)
+        targetSpeed = min(targetSpeed, 40)
         m.state[3] = targetSpeed
         cmd = [0 max(min(δ, π/4.0), -π/4.0)]
 
         @replace(CMD, cmd)
     end
+end
+
+function run_simulation_iteration(simIterations, Δ, movables, vels, laneNum, dists, road)
+    lane = true
+    movablesCopyLane = deepcopy(movables)
+    K₁ = 0.04
+    K₂ = 0.04
+    max_dist = 7.5
+    seg = road.segments[1]
+
+    for i in 1:simIterations
+        for (id, mov) ∈ movablesCopyLane
+            pos1 = position(movablesCopyLane[1])
+            if id != 1
+                if mov.target_lane == laneNum
+                    dist = norm(pos1 - position(mov))
+                    if dist < max_dist || collision(movablesCopyLane[1], mov)
+                        vels[laneNum] = speed(mov)
+                        lane =  false
+                        break;
+                    end
+                end
+            end
+
+            if id == 1
+                cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), laneNum, seg, road.lanes, road.lanewidth)
+            else
+                cteS, ctvS = get_crosstrack_error(position(mov), heading(mov), speed(mov), mov.target_lane, seg, road.lanes, road.lanewidth)
+            end
+            δ = -K₁*cteS-K₂*ctvS
+            command = [0.0 max(min(δ, π/4.0), -π/4.0)]
+            θ = mov.state[4]
+            v = mov.state[3]
+            a = command[1]
+            ω = command[2]
+            mov.state[1] += Δ * cos(θ) * v
+            mov.state[2] += Δ * sin(θ) * v
+            mov.state[3] += Δ * a
+            mov.state[4] += Δ * ω
+        end
+        if !lane
+            break;
+        end
+        dists[laneNum] += 1;
+    end
+
+    lane
 end
