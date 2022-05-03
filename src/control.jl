@@ -117,11 +117,7 @@ function controller(CMD::Channel,
     local ego_meas
     local fleet_meas
 
-    θ = 0
-    p = 0
-    v = 30.0
-    t = 50
-    m.state[3] = v
+    m.state[3] = 30.0
     prevLane = 1
     lanes = [0 0 0 0 0 0]
     canGo = [0 0 0]
@@ -169,11 +165,8 @@ function controller(CMD::Channel,
                 end
             end
         end
-
         
         targetLane = 0
-        
-    
         if laneImp == 2 || laneImp == maxLane
             targetLane = maxLane
         elseif laneImp == 1
