@@ -56,7 +56,7 @@ function keyboard_controller(KEY::Channel,
 end
 
 
-function findLane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int64, OracleMeas}, road, currLane)
+function find_lane(target_speed::Float64, meas::OracleMeas, fleet_meas::Dict{Int64, OracleMeas}, road, currLane)
 
     CMD_FLEET_SIM = Dict{Int, Channel{VehicleControl}}()
     CMD_EGO_SIM = Channel{VehicleControl}(1)
@@ -127,6 +127,8 @@ function controller(CMD::Channel,
     segment = road.segments[road_segment(m,road)]
     laneImp = 1
     speedChange = 6
+    Vmin = 10
+    Vmax = 40
     while true
         sleep(0)
         @return_if_told(EMG)
@@ -149,7 +151,7 @@ function controller(CMD::Channel,
         end
 
         while !foundALane
-            lanes = findLane(targetSpeed, meas, fleet_meas, road, prevLane)
+            lanes = find_lane(targetSpeed, meas, fleet_meas, road, prevLane)
             canGo = round.(Int64, lanes[1:3])
             dists = round.(Int64, lanes[4:6])
             vels = lanes[7:9]
@@ -158,7 +160,7 @@ function controller(CMD::Channel,
             if sum(canGo) > 0
                 foundALane = true
             else
-                if targetSpeed < 10
+                if targetSpeed < Vmin
                     foundALane = true
                 else
                     targetSpeed -= speedChange
@@ -194,7 +196,7 @@ function controller(CMD::Channel,
             targetSpeed += speedChange/2
         end
 
-        targetSpeed = min(targetSpeed, 40)
+        targetSpeed = min(targetSpeed, Vmax)
         m.state[3] = targetSpeed
         cmd = [0 max(min(δ, π/4.0), -π/4.0)]
 
